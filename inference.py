@@ -49,7 +49,7 @@ logger = get_logger(__name__, log_level="INFO")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
-    parser.add_argument("--pretrained_model_name_or_path",type=str,default= "yisol/IDM-VTON",required=False,)
+    parser.add_argument("--pretrained_model_name_or_path",type=str, default= "yisol/IDM-VTON",required=False,)
     parser.add_argument("--width",type=int,default=768,)
     parser.add_argument("--height",type=int,default=1024,)
     parser.add_argument("--num_inference_steps",type=int,default=30,)
