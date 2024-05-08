@@ -1,0 +1,6 @@
+
+*.safetensors
+*.onnx
+*.pkl
+*.pth
+*.bin

@@ -93,7 +93,7 @@ EXAMPLE_DOC_STRING = """
         >>> prompt = "A majestic tiger sitting on a bench"
         >>> image = pipe(
         ...     prompt=prompt, image=init_image, mask_image=mask_image, num_inference_steps=50, strength=0.80
-        ... ).images[0]
+        ... ).images[0]; image
         ```
 """
 
