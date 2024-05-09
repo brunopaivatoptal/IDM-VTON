@@ -7,7 +7,7 @@ To test:
     self = VtonDataset(r"E:\backups\toptal\pixelcut\virtual-try-on\viton-partial", (1024, 1024))
     
 """
-
+from modules.SegmentationLabels import CIHP_LABELS
 from torch.utils.data import Dataset
 import torchvision.transforms as T
 from pathlib import Path
@@ -21,7 +21,10 @@ import os
 
 def pil_to_tensor(images):
     images = np.array(images).astype(np.float32) / 255.0
-    images = torch.from_numpy(images.transpose(2, 0, 1))
+    if len(images.shape) == 3:
+        images = torch.from_numpy(images.transpose(2, 0, 1))
+    elif len(images.shape) == 2:
+        images = torch.from_numpy(images).unsqueeze(0)
     return images
 
 class VtonDataset(Dataset):
@@ -39,7 +42,6 @@ class VtonDataset(Dataset):
         self.imgSize = imgSize
         self.transform = T.Compose(
             [
-                T.ToTensor(),
                 T.Normalize([0.5], [0.5]),
             ])
     
@@ -65,7 +67,8 @@ class VtonDataset(Dataset):
                 with open(fn) as file:
                     data = file.read()
             else:
-                data = Image.open(fn)
+                data = pil_to_tensor(Image.open(fn)).unsqueeze(0)
+                data = self.transform(data)
             return data
         except:
             return None
@@ -76,4 +79,7 @@ class VtonDataset(Dataset):
     def __getitem__(self, index):
         item = self.index[index]
         dataObjs = {x:self.loadFile(item[x]) for x in item}
+        dataObjs["caption_cloth"] = "a photo of " + dataObjs["caption"]
+        dataObjs["caption"] = "model is wearing a " + dataObjs["caption"]
+        dataObjs.update({"filename":""})
         return dataObjs

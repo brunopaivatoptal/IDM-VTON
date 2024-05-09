@@ -31,13 +31,15 @@ print("Captioning", len(allFiles))
 
 batch = []
 
-for f in tqdm(allFiles, desc="Captioning..."):
+for i, f in enumerate(tqdm(allFiles, desc="Captioning...")):
+    if os.path.exists(f/"caption/caption.txt"):
+        continue
     if os.path.isdir(f):
         base = f/"garment"
         fn = os.listdir(base)
         image = Image.open(base/fn[0])
         batch.append((image, f))
-        if len(batch) >= BATCH_SZ:
+        if len(batch) >= BATCH_SZ or (i == len(allFiles)-1):
             inputs = processor([b[0] for b in batch], return_tensors="pt").to("cuda")
             with torch.no_grad():
                 out = model.generate(**inputs)
