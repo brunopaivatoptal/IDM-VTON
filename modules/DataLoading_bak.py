@@ -42,9 +42,6 @@ CIHP_LABELS = {
 }
 
 
-def to_long(x, **kwargs):
-    return x.to(torch.long)
-
 class Transforms:
     def __init__(
         self, image_size: Tuple[int, int], use_augmentations: bool = True
@@ -135,6 +132,10 @@ class Transforms:
                 "densepose_image": "image",
             },
         )
+
+        def to_long(x, **kwargs):
+            return x.to(torch.long)
+
         self.segmentation_type_transforms = A.Compose(
             [
                 ToTensorV2(),
@@ -191,6 +192,8 @@ class SDCNVTONDataset(Dataset):
         super().__init__()
 
         self.data_dir = data_dir
+        if type(self.data_dir) is str:
+            self.data_dir = Path(self.data_dir)
         self.pretrained_processor_path = pretrained_processor_path
         self.garment_folder = garment_folder
         self.person_folder = person_folder
@@ -206,7 +209,7 @@ class SDCNVTONDataset(Dataset):
         self.transform = transform
 
         self.processor = AutoProcessor.from_pretrained(pretrained_processor_path)
-        self.folder_paths = os.listdir(data_dir)
+        self.folder_paths = [x for x in os.listdir(data_dir) if x.find("viton250k-gm")>=0]
 
     def __len__(self) -> int:
         return len(self.folder_paths)
@@ -243,19 +246,22 @@ class SDCNVTONDataset(Dataset):
         pose_filename = f"{person_image_filename.split('.')[0]}.pkl"
 
         # Load the images
-        def load_image(folder, filename):
-            image = Image.open(os.path.join(folder, filename)).convert("RGB")
+        def load_image(folder, filename, fmt="RGB"):
+            image = Image.open(os.path.join(folder, filename)).convert(fmt)
             return np.array(image)
 
         garment_image = load_image(garment_image_folder_path, garment_image_filename)
         person_image = load_image(person_image_folder_path, person_image_filename)
         segmentation_image = load_image(
-            segmentation_image_folder_path, segmentation_image_filename
+            segmentation_image_folder_path, segmentation_image_filename, fmt="L"
         )
         densepose_image = load_image(
             densepose_image_folder_path, densepose_image_filename
         )
 
+        cloth_mask = parse_cloth_mask(
+            torch.Tensor(segmentation_image).unsqueeze(0), self.cloth_labels
+        )
         # Load the pose
         with open(os.path.join(pose_folder_path, pose_filename), "rb") as f:
             pose = pickle.load(f)
@@ -263,14 +269,13 @@ class SDCNVTONDataset(Dataset):
         # Clip shares the same garment image but has a different preprocessing pipeline
         clip_garment_image = garment_image.copy()
 
-        preprocessed_images = self.transform(
-            {
+        preprocessed_images = {
                 "garment_image": garment_image,
                 "person_image": person_image,
                 "segmentation_image": segmentation_image,
                 "densepose_image": densepose_image,
             }
-        )
+        preprocessed_images = {x:self.transform(preprocessed_images[x]) for x in preprocessed_images}
 
         clip_image_encoder_garment_image = self.processor(
             images=clip_garment_image, return_tensors="pt"
@@ -286,13 +291,10 @@ class SDCNVTONDataset(Dataset):
             self.hand_mask_eps,
             self.hand_mask_thickness,
         )
-        cloth_mask = parse_cloth_mask(
-            preprocessed_images["segmentation_image"], self.cloth_labels
-        )
         
-        with open(Path(self.data_dir)/self.folder_paths[index]/"caption/caption.txt", "r") as f:
+        with open(self.data_dir/self.folder_paths[index]/"caption/caption.txt", "r") as f:
             caption = f.read()
-
+        
         return {
             "clip_image_encoder_garment_image": clip_image_encoder_garment_image,
             "identity_image": identity_image,

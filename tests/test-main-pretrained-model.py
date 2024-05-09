@@ -16,6 +16,7 @@ from torchvision import transforms
 from accelerate import Accelerator
 import torch.utils.data as data
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from packaging import version
 from PIL import Image
 import transformers
@@ -101,27 +102,58 @@ pipe = TryonPipeline.from_pretrained(
         scheduler = noise_scheduler,
         image_encoder=image_encoder,
         torch_dtype=torch.float16,
-).to(accelerator.device)
+)
 pipe.unet_encoder = UNet_Encoder
+pipe = pipe.to(accelerator.device)
 
-from modules.VtonDataset import VtonDataset, pil_to_tensor
-ds = VtonDataset(r"E:\backups\toptal\pixelcut\virtual-try-on\viton-partial", (1024, 1024))
+from modules.VtonDataset import pil_to_tensor
+from modules.dataloading import *
+#ds = SDCNVTONDataset(data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
+#                     pretrained_processor_path="openai/clip-vit-large-patch14")
 
-sample = ds[1]
+dm = SDCNVTONDataModule(
+    SDCNVTONDataModuleConfig(
+        train_data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
+        val_data_dir="./",        
+    )
+)
+dm.setup()
+train_dl = dm.train_dataloader()
+
+for b in train_dl:
+    sample = b
+    break
 """
 sample.keys()
-dict_keys(['caption', 'densepose', 'garment', 'person', 'pose', 'segmentation', 'caption_cloth', 'filename'])
+
+Out[3]: dict_keys(['clip_image_encoder_garment_image', 'identity_image', 'identity_mask',
+                   'cloth_mask', 'caption_cloth', 'caption', 'garment_image', 'person_image',
+                   'segmentation_image', 'densepose_image'])
 """
+
+def visualize(sample, key):
+    xi = sample[key][0]
+    xi = (xi - xi.min())/(xi.max() - xi.min())
+    plt.imshow(xi.cpu().numpy().transpose(1,2,0))
+    plt.axis("off")
+
+offset=0
+plt.figure(figsize=(16,10))
+for i, k in enumerate(sample.keys()):
+    if type(sample[k][0]) is str:
+        offset+=1
+        continue
+    plt.subplot(2,4,i+1-offset)
+    plt.title(k)
+    visualize(sample, key=k)
+plt.tight_layout()
+plt.show()
 
 with torch.cuda.amp.autocast():
     with torch.no_grad():
-        img_emb_list = []
-        for i in range(sample['garment'].shape[0]):
-            img_emb_list.append(sample['garment'][i])
-        
         prompt = sample["caption"]
 
-        num_prompts = sample['garment'].shape[0]
+        num_prompts = sample['garment_image'].shape[0]
         negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
 
         if not isinstance(prompt, List):
@@ -129,7 +161,7 @@ with torch.cuda.amp.autocast():
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
-        image_embeds = torch.cat(img_emb_list,dim=0).unsqueeze(0)
+        image_embeds = sample['clip_image_encoder_garment_image']
 
         with torch.inference_mode():
             (
@@ -169,20 +201,20 @@ with torch.cuda.amp.autocast():
             
             generator = torch.Generator(pipe.device).manual_seed(42)
             images = pipe(
-                prompt_embeds=prompt_embeds,
-                negative_prompt_embeds=negative_prompt_embeds,
-                pooled_prompt_embeds=pooled_prompt_embeds,
-                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                prompt_embeds=prompt_embeds.to(accelerator.device),
+                negative_prompt_embeds=negative_prompt_embeds.to(accelerator.device),
+                pooled_prompt_embeds=pooled_prompt_embeds.to(accelerator.device),
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(accelerator.device),
                 num_inference_steps=40,
                 generator=generator,
                 strength = 1.0,
-                pose_img = sample['densepose'],
-                text_embeds_cloth=prompt_embeds_c,
-                cloth = sample["garment"].to(accelerator.device),
-                mask_image=sample['segmentation'],
-                image=(sample['person']+1.0)/2.0, 
-                height=512,
-                width=512,
+                pose_img = sample['densepose_image'].to(accelerator.device),
+                text_embeds_cloth=prompt_embeds_c.to(accelerator.device),
+                cloth = sample["garment_image"].to(accelerator.device),
+                mask_image=sample['cloth_mask'].to(accelerator.device),
+                image=(sample['person_image'].to(accelerator.device)+1.0)/2.0, 
+                height=256,
+                width=256,
                 guidance_scale=2.0,
                 ip_adapter_image = image_embeds,
             )[0]
@@ -190,5 +222,5 @@ with torch.cuda.amp.autocast():
 
         for i in range(len(images)):
             x_sample = pil_to_tensor(images[i])
-            torchvision.utils.save_image(x_sample,os.path.join("results",sample['caption'][i]))
+            torchvision.utils.save_image(x_sample,os.path.join("results",sample['caption'][i] + ".png"))
         

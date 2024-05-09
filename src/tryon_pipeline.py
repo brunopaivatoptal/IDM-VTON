@@ -1781,7 +1781,10 @@ class StableDiffusionXLInpaintPipeline(
                 if ip_adapter_image is not None:
                     added_cond_kwargs["image_embeds"] = image_embeds
                 # down,reference_features = self.UNet_Encoder(cloth,t, text_embeds_cloth,added_cond_kwargs= {"text_embeds": pooled_prompt_embeds_c, "time_ids": add_time_ids},return_dict=False)
-                down,reference_features = self.unet_encoder(cloth,t, text_embeds_cloth,return_dict=False)
+                down, reference_features = self.unet_encoder.cuda()(cloth.cuda(),
+                                                            t.cuda(),
+                                                            text_embeds_cloth.cuda(),
+                                                            return_dict=False)
                 # print(type(reference_features))
                 # print(reference_features)
                 reference_features = list(reference_features)

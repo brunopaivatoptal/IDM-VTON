@@ -81,5 +81,5 @@ class VtonDataset(Dataset):
         dataObjs = {x:self.loadFile(item[x]) for x in item}
         dataObjs["caption_cloth"] = "a photo of " + dataObjs["caption"]
         dataObjs["caption"] = "model is wearing a " + dataObjs["caption"]
-        dataObjs.update({"filename":""})
+        dataObjs.update({"filename":os.path.split(item)[0]})
         return dataObjs
