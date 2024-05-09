@@ -111,10 +111,13 @@ from modules.dataloading import *
 #ds = SDCNVTONDataset(data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
 #                     pretrained_processor_path="openai/clip-vit-large-patch14")
 
+IMAGE_SIZE=(512, 512)
+
 dm = SDCNVTONDataModule(
     SDCNVTONDataModuleConfig(
         train_data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
-        val_data_dir="./",        
+        val_data_dir="./",      
+        image_size=IMAGE_SIZE
     )
 )
 dm.setup()
@@ -213,8 +216,8 @@ with torch.cuda.amp.autocast():
                 cloth = sample["garment_image"].to(accelerator.device),
                 mask_image=sample['cloth_mask'].to(accelerator.device),
                 image=(sample['person_image'].to(accelerator.device)+1.0)/2.0, 
-                height=256,
-                width=256,
+                height=IMAGE_SIZE[1],
+                width=IMAGE_SIZE[0],
                 guidance_scale=2.0,
                 ip_adapter_image = image_embeds,
             )[0]
