@@ -13,7 +13,13 @@ def readFile(fn):
         data = f.read()
     return data
 
-root = Path("/mnt/vdb/datasets/viton_combined_annotated/viton_combined_annotated")
+root = [x for x in 
+        [
+            Path(r"E:\backups\toptal\pixelcut\virtual-try-on\viton_hd_images_test_paired_annotated_open_pose_yolo_pose"),
+            Path(r"E:\backups\toptal\pixelcut\virtual-try-on\viton-partial"),
+            Path("/mnt/vdb/datasets/viton_combined_annotated/viton_combined_annotated"),
+         ]
+        if os.path.exists(x)][0]
 allSubFolders = os.listdir(root)
 
 allCaptions = {}
@@ -24,5 +30,5 @@ for subfolder in tqdm(allSubFolders, desc="Aggregating captions..."):
     allCaptions.update({subfolder:caption})
     
 allCaptions_s = pd.DataFrame(pd.Series(allCaptions, name="caption"))
-allCaptions_s.to_pickle(root/"../captions.pickle")
+allCaptions_s.to_pickle(root/"../captions_test_paired_annotated_open_pose_yolo_pose.pickle")
 

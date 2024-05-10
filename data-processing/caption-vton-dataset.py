@@ -16,10 +16,13 @@ import torch
 import os 
 
 root = [x for x in 
-        [Path(r"E:\backups\toptal\pixelcut\virtual-try-on\viton-partial"),
-         Path("/mnt/vdb/datasets/viton_combined_annotated/viton_combined_annotated")]
+        [
+            Path(r"E:\backups\toptal\pixelcut\virtual-try-on\viton_hd_images_test_paired_annotated_open_pose_yolo_pose"),
+            Path(r"E:\backups\toptal\pixelcut\virtual-try-on\viton-partial"),
+            Path("/mnt/vdb/datasets/viton_combined_annotated/viton_combined_annotated"),
+         ]
         if os.path.exists(x)][0]
-BATCH_SZ=400
+BATCH_SZ=32
 
 processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
 model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large").to("cuda")

@@ -111,7 +111,7 @@ from modules.dataloading import *
 #ds = SDCNVTONDataset(data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
 #                     pretrained_processor_path="openai/clip-vit-large-patch14")
 
-IMAGE_SIZE=(512, 512)
+IMAGE_SIZE=(1024, 1024)
 
 dm = SDCNVTONDataModule(
     SDCNVTONDataModuleConfig(
