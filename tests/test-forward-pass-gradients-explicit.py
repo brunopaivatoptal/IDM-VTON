@@ -3,6 +3,9 @@
 Special requirement:
 Requires diffusers==0.25.1
 """
+import os
+if os.path.exists("/mnt/vdb/virtual-try-on/IDM-VTON"):
+    os.chdir("/mnt/vdb/virtual-try-on/IDM-VTON")
 from transformers import AutoTokenizer, PretrainedConfig,CLIPImageProcessor, CLIPVisionModelWithProjection,CLIPTextModelWithProjection, CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, StableDiffusionXLControlNetInpaintPipeline
 from src.unet_hacked_garmnet import UNet2DConditionModel as UNet2DConditionModel_ref
@@ -11,111 +14,46 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
 from diffusers.utils.import_utils import is_xformers_available
 from accelerate.utils import ProjectConfiguration, set_seed
 from src.unet_hacked_tryon import UNet2DConditionModel
+from modules.IdmVtonModel import IdmVtonModel
 from accelerate.logging import get_logger
-from torchvision import transforms
 from accelerate import Accelerator
+import matplotlib.pyplot as plt
 import torch.utils.data as data
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from packaging import version
 from PIL import Image
 import transformers
-import torchvision
 import numpy as np
 import accelerate
 import diffusers
 import torch
 import json
-import os
+
+def show(x : torch.Tensor):
+    xi = (x - x.min()) / (x.max() - x.min())
+    plt.imshow(xi.cpu().detach().numpy()[0].transpose(1,2,0))
+    plt.axis("off")
+    plt.tight_layout()
 
 
-noise_scheduler = DDPMScheduler.from_pretrained("modelCheckpoints", subfolder="scheduler")
-vae = AutoencoderKL.from_pretrained(
-    "modelCheckpoints",
-    subfolder="vae",
-    torch_dtype=torch.float16,
-)
-unet = UNet2DConditionModel.from_pretrained(
-    "modelCheckpoints",
-    subfolder="unet",
-    torch_dtype=torch.float16,
-)
-image_encoder = CLIPVisionModelWithProjection.from_pretrained(
-    "modelCheckpoints",
-    subfolder="image_encoder",
-    torch_dtype=torch.float16,
-)
-UNet_Encoder = UNet2DConditionModel_ref.from_pretrained(
-    "modelCheckpoints",
-    subfolder="unet_encoder",
-    torch_dtype=torch.float16,
-)
-text_encoder_one = CLIPTextModel.from_pretrained(
-    "modelCheckpoints",
-    subfolder="text_encoder",
-    torch_dtype=torch.float16,
-)
-text_encoder_two = CLIPTextModelWithProjection.from_pretrained(
-    "modelCheckpoints",
-    subfolder="text_encoder_2",
-    torch_dtype=torch.float16,
-)
-tokenizer_one = AutoTokenizer.from_pretrained(
-    "modelCheckpoints",
-    subfolder="tokenizer",
-    revision=None,
-    use_fast=False,
-)
-tokenizer_two = AutoTokenizer.from_pretrained(
-    "modelCheckpoints",
-    subfolder="tokenizer_2",
-    revision=None,
-    use_fast=False,
-)
-
-accelerator_project_config = ProjectConfiguration(project_dir="result")
-accelerator = Accelerator(
-    mixed_precision="bf16",
-    project_config=accelerator_project_config,
-)
-
-# Freeze vae and text_encoder and set unet to trainable
-unet.requires_grad_(False)
-vae.requires_grad_(False)
-image_encoder.requires_grad_(False)
-UNet_Encoder.requires_grad_(False)
-text_encoder_one.requires_grad_(False)
-text_encoder_two.requires_grad_(False)
-unet.eval()
-UNet_Encoder.eval()
+train_data_dir = [x for x in 
+                  [
+                    r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
+                    "/mnt/vdb/datasets/viton_combined_annotated/viton_combined_annotated"
+                  ] if os.path.exists(x)][0]
 
 
-pipe = TryonPipeline.from_pretrained(
-        "modelCheckpoints",
-        unet=unet,
-        vae=vae,
-        feature_extractor= CLIPImageProcessor(),
-        text_encoder = text_encoder_one,
-        text_encoder_2 = text_encoder_two,
-        tokenizer = tokenizer_one,
-        tokenizer_2 = tokenizer_two,
-        scheduler = noise_scheduler,
-        image_encoder=image_encoder,
-        torch_dtype=torch.float16,
-)
-pipe.unet_encoder = UNet_Encoder
-pipe = pipe.to(accelerator.device)
+model = IdmVtonModel.load_from_initial_ckpt("modelCheckpoints")
+sum([x.numel() for x in model.parameters()]) ## Total of about 7bn parameters
 
-from modules.VtonDataset import pil_to_tensor
 from modules.dataloading import *
-#ds = SDCNVTONDataset(data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
-#                     pretrained_processor_path="openai/clip-vit-large-patch14")
 
-IMAGE_SIZE=(1024, 1024)
+IMAGE_SIZE=(256, 256)
 
 dm = SDCNVTONDataModule(
     SDCNVTONDataModuleConfig(
-        train_data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
+        train_data_dir=train_data_dir,
         val_data_dir="./",      
         image_size=IMAGE_SIZE
     )
@@ -124,6 +62,7 @@ dm.setup()
 train_dl = dm.train_dataloader()
 
 for sample in train_dl:
+    break
     with torch.cuda.amp.autocast():
         with torch.no_grad():
             prompt = sample["caption"]
