@@ -299,7 +299,7 @@ class SDCNVTONDataset(Dataset):
             "identity_mask": identity_mask.float(),
             "cloth_mask": cloth_mask.float(),
             "caption_cloth" : "a photo of " + caption,
-            "caption":"model is wearing a " + caption,
+            "caption":"model is wearing " + caption,
             **preprocessed_images,
         }
 
