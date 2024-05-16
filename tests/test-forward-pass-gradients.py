@@ -134,7 +134,6 @@ for sample in train_dl:
     with torch.cuda.amp.autocast():
         with torch.no_grad():
             prompt = sample["caption"]
-    
             num_prompts = sample['garment_image'].shape[0]
             negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
     
@@ -183,6 +182,7 @@ for sample in train_dl:
                 
                 generator = torch.Generator(pipe.device).manual_seed(42)
                 images = pipe(
+                #images = StableDiffusionXLInpaintPipeline.__call__(self,
                     prompt_embeds=prompt_embeds.to(accelerator.device),
                     negative_prompt_embeds=negative_prompt_embeds.to(accelerator.device),
                     pooled_prompt_embeds=pooled_prompt_embeds.to(accelerator.device),
@@ -199,6 +199,7 @@ for sample in train_dl:
                     width=IMAGE_SIZE[0],
                     guidance_scale=2.0,
                     ip_adapter_image = image_embeds,
+                    device=accelerator.device
                 )[0]
     
     

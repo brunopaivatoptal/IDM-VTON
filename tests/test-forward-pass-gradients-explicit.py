@@ -58,7 +58,7 @@ accelerator = Accelerator(
     project_config=accelerator_project_config,
 )
 
-model = IdmVtonModel.load_from_initial_ckpt("modelCheckpoints")
+model = IdmVtonModel.load_from_initial_ckpt(folder="modelCheckpoints")
 model=model.to(accelerator.device)
 self=model
 sum([x.numel() for x in model.parameters()]) ## Total of about 7bn parameters
