@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
 from diffusers.utils.import_utils import is_xformers_available
 from accelerate.utils import ProjectConfiguration, set_seed
 from src.unet_hacked_tryon import UNet2DConditionModel
+from diffusers.utils.torch_utils import randn_tensor
 from modules.IdmVtonModel import IdmVtonModel
 from accelerate.logging import get_logger
 from accelerate import Accelerator
@@ -22,11 +23,13 @@ import torch.utils.data as data
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from packaging import version
+from tqdm import tqdm
 from PIL import Image
 import transformers
 import numpy as np
 import accelerate
 import diffusers
+import hashlib
 import torch
 import json
 
@@ -36,9 +39,15 @@ def show(x : torch.Tensor):
     plt.axis("off")
     plt.tight_layout()
 
+def tensor_fingerprint(t : torch.Tensor) -> str:
+    s = " ".join([str(x) for x in t.detach().ravel().round(decimals=3).cpu().numpy()])
+    h = hashlib.sha1(s.encode("utf8")).hexdigest()
+    return h
 
 train_data_dir = [x for x in 
                   [
+                    r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_single_sample",
+                    "/mnt/vdb/datasets/viton_combined_annotated/viton_single_sample",
                     r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
                     "/mnt/vdb/datasets/viton_combined_annotated/viton_combined_annotated"
                   ] if os.path.exists(x)][0]
@@ -53,6 +62,7 @@ model = IdmVtonModel.load_from_initial_ckpt("modelCheckpoints")
 model=model.to(accelerator.device)
 self=model
 sum([x.numel() for x in model.parameters()]) ## Total of about 7bn parameters
+
 
 from modules.dataloading import *
 IMAGE_SIZE=(256, 256)
@@ -70,27 +80,54 @@ train_dl, model = accelerator.prepare(train_dl, model)
 for batch in train_dl:
     with torch.cuda.amp.autocast():
         with torch.no_grad():
-            caption_model = sample["caption"]
-            caption_cloth = sample["caption_cloth"]
-            num_prompts = sample['garment_image'].shape[0]
+            caption_model = prompt = batch["caption"]
+            caption_cloth = batch["caption_cloth"]
+            num_prompts = batch['garment_image'].shape[0]
             negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
-            image_embeds = sample['clip_image_encoder_garment_image']
-            break 
-            
+            image_embeds = batch['clip_image_encoder_garment_image']
             generator = torch.Generator(accelerator.device).manual_seed(42)
-            images = model(
-                caption_model=caption_model,
-                negative_prompts=negative_prompts,
-                num_inference_steps=40,
-                strength = 1.0,
-                densepose_image = sample['densepose_image'].to(accelerator.device),
-                caption_cloth=caption_cloth,
-                cloth = sample["garment_image"].to(accelerator.device),
-                mask_image=sample['cloth_mask'].to(accelerator.device),
-                person_image=(sample['person_image'].to(accelerator.device)+1.0)/2.0, 
-                guidance_scale=2.0,
-                ip_adapter_image = image_embeds,
-            )[0]
+            break
+            
+            timesteps = torch.Tensor([976, 951, 926, 901, 876, 851, 826, 801, 776, 751, 726, 701, 676, 651,
+                    626, 601, 576, 551, 526, 501, 476, 451, 426, 401, 376, 351, 326, 301,
+                    276, 251, 226, 201, 176, 151, 126, 101,  76,  51,  26,   1]).to(torch.long)
+            noisy_person_latents = randn_tensor((4,4,32,32),
+                                                device=batch['garment_image'].device,
+                                                dtype=torch.float16)
+            start = noisy_person_latents
+            
+            for ts in tqdm(timesteps):
+                with torch.cuda.amp.autocast():
+                    with torch.no_grad():
+                        noise_residual_pred, _, _ = model(batch, ts,
+                                                          noisy_person_latents=noisy_person_latents,
+                                                          return_latents=True)
+                        noisy_person_latents = self.scheduler.step(noise_residual_pred, 
+                                                                      ts.repeat(4).cpu()[0], 
+                                                                      noisy_person_latents,
+                                                                      return_dict=False)[0]
+                
+            with torch.cuda.amp.autocast():
+                with torch.no_grad():
+                    noisy_person_image = self.vae.decode(start.cuda()).sample
+                    a = noisy_person_image
+                    a = (a - a.min()) / (a.max() - a.min())
+                    noisy_person_latents = self.vae.decode(noisy_person_latents.cuda()).sample
+                    b = noisy_person_image
+                    b = (b - b.min()) / (b.max() - b.min())
+            plt.figure(figsize=(12,7))
+            plt.subplot(1,3,1)
+            plt.title("Noisy")
+            plt.imshow(a[0].cpu().float().numpy().transpose(1,2,0))
+            plt.axis("off")
+            plt.subplot(1,3,2)
+            plt.title("Denoised")
+            plt.imshow(b[0].cpu().float().numpy().transpose(1,2,0))
+            plt.axis("off")
+            plt.subplot(1,3,3)
+            plt.title("Person Img")
+            plt.imshow(batch["person_image"][0].cpu().float().numpy().transpose(1,2,0))
+            plt.axis("off")
 
     
             for i in range(len(images)):

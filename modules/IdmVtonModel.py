@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.schedulers import KarrasDiffusionSchedulers
 from src.unet_hacked_tryon import UNet2DConditionModel
+from diffusers.utils.torch_utils import randn_tensor
 from dataclasses import dataclass
 import src.tryon_pipeline as pl
 import matplotlib.pyplot as plt
@@ -19,7 +20,7 @@ from transformers import (
     CLIPTokenizer,
     CLIPVisionModelWithProjection,
 )
-
+from diffusers.models import ImageProjection
 from diffusers.utils import (
     USE_PEFT_BACKEND,
     deprecate,
@@ -51,6 +52,12 @@ import os
 
 logger = logging.get_logger(__name__)
 
+@dataclass 
+class IdmVtonConfig:
+    requires_aesthetics_score: bool = False
+    num_images_per_prompt : int = 1
+    do_classifier_free_guidance : bool = False
+
 
 class IdmVtonModel(nn.Module):
     """
@@ -58,7 +65,7 @@ class IdmVtonModel(nn.Module):
     The 'forward' method in this class is based on the 'src.tryon_pipeline' code, and uses 
     some of the methods in Kinyugo's scripts.
     """
-    def __init__(self, ckpt_dir,
+    def __init__(self,
                  vae: AutoencoderKL,
                  text_encoder: CLIPTextModel,
                  text_encoder_2: CLIPTextModelWithProjection,
@@ -72,60 +79,103 @@ class IdmVtonModel(nn.Module):
                  device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
                  image_sz=(256, 256)):
         super().__init__()
-        self.pipe = pl.StableDiffusionXLInpaintPipeline.from_pretrained(
-                ckpt_dir,
-                unet=unet,
-                vae=vae,
-                feature_extractor= CLIPImageProcessor(),
-                text_encoder = text_encoder,
-                text_encoder_2 = text_encoder_2,
-                tokenizer = tokenizer,
-                tokenizer_2 = tokenizer_2,
-                scheduler = scheduler,
-                image_encoder=image_encoder,
-                torch_dtype=torch.float16,
-        )
+        self.vae=vae
+        self.text_encoder=text_encoder
+        self.text_encoder_2=text_encoder_2
+        self.tokenizer=tokenizer
+        self.tokenizer_2=tokenizer_2
+        self.unet=unet
+        self.scheduler=scheduler
+        self.image_encoder=image_encoder
+        self.feature_extractor=feature_extractor
+        self.unet_encoder=unet_encoder
         self.image_sz = image_sz
         self._execution_device=device
-        self.vae_scale_factor = 2 ** (len(self.pipe.vae.config.block_out_channels) - 1)
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.vae_image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
+        self.mask_processor = VaeImageProcessor(
+            vae_scale_factor=self.vae_scale_factor, 
+            do_normalize=False, do_binarize=True,
+            do_convert_grayscale=True
+        )
+        self.config = IdmVtonConfig()
 
     
-    def forward(self,batch):
-        with torch.cuda.amp.autocast():
-            num_prompts = batch["person_image"].shape[0]
+    def forward(self,batch, timesteps=None,
+                noisy_person_latents=None,
+                return_latents=False):
+    #with torch.cuda.amp.autocast():
+        with torch.no_grad():
+            ## Step 1. Convert inputs to latents
+            num_prompts = batch_sz = batch["person_image"].shape[0]
             prompt_embeddings = self.encode_cloth_and_model_prompts(num_prompts, 
                                                                     batch["caption"], 
                                                                     batch["caption_cloth"])
-            person_latents = self._image_to_latent(batch["person_image"])
-            identity_latents = self._image_to_latent(batch["identity_image"])
-            identity_mask_latents = self._mask_to_latent(batch["identity_mask"])
+            masked_image = batch["person_image"] * (batch["cloth_mask"] < 0.5)
+            pi = (batch["person_image"] + 1)/2
+            person_latents = self._image_to_latent(pi)
+            cloth_mask_latents = self._mask_to_latent(batch["cloth_mask"])
             densepose_latents = self._image_to_latent(batch["densepose_image"])
+            cloth_latents = self._image_to_latent(batch["garment_image"])
+            masked_image_latents = self._image_to_latent(masked_image)
             
-            encoder_hidden_states = self.image_encoder(batch["clip_image_encoder_garment_image"])
+            ip_adapter_img = batch["clip_image_encoder_garment_image"]
             
-            timesteps = torch.randint(
-                low=0,
-                high=self.scheduler.config.num_train_timesteps,
-                size=(person_latents.shape[0],),
-                device=person_latents.device,
-                dtype=torch.long,
+            if timesteps is None:
+                timesteps = torch.randint(
+                    low=0,
+                    high=self.scheduler.config.num_train_timesteps,
+                    size=(person_latents.shape[0],),
+                    device=person_latents.device,
+                    dtype=torch.long,
+                    )
+            if noisy_person_latents is None:
+                noise = randn_tensor(person_latents.shape,
+                                     device=person_latents.device, 
+                                     dtype=person_latents.dtype)
+                noisy_person_latents = self.scheduler.add_noise(
+                    person_latents, noise, timesteps
                 )
-            noise = torch.randn_like(person_latents)
-            noisy_person_latents = self.scheduler.add_noise(
-                person_latents, noise, timesteps
-            )
+            noisy_person_latents = self.scheduler.scale_model_input(noisy_person_latents, timesteps)
+            down, encoded_reference_features = self.unet_encoder(cloth_latents,
+                                                                 timesteps,
+                                                                 prompt_embeddings["cloth_prompt_embedding"],
+                                                                 return_dict=False)
+            latent_model_input = torch.cat([noisy_person_latents, 
+                                            cloth_mask_latents, 
+                                            masked_image_latents,
+                                            densepose_latents], dim=1)
             
-            latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents,pose_img], dim=1)
-            
-        model_pred = self.unet(
-            garment_unet_input=batch["garment_image"],
-            person_unet_input=person_unet_input,
-            timestep=timesteps,
-            encoder_hidden_states=encoder_hidden_states,
+            add_text_embeds = prompt_embeddings["pooled_prompt_embeds"]
+            add_time_ids, add_neg_time_ids = self._get_add_time_ids(
+                                self.image_sz,
+                                dtype=add_text_embeds.dtype
+                                )
+            add_time_ids = add_time_ids.repeat(batch_sz * self.config.num_images_per_prompt, 1)
+            added_cond_kwargs = {"text_embeds": add_text_embeds.to(add_text_embeds.device),
+                                 "time_ids":add_time_ids.to(add_text_embeds.device)}
+            image_embeds = self.prepare_ip_adapter_image_embeds(ip_adapter_img,
+                                                                device=add_text_embeds.device,
+                                                                num_images_per_prompt=1)
+            image_embeds = self.unet.encoder_hid_proj(image_embeds).to(latent_model_input.dtype)
+            added_cond_kwargs["image_embeds"]=image_embeds
+                
+            timestep_cond = None
+        noise_residual_pred = self.unet(
+            latent_model_input,
+            timesteps,
+            encoder_hidden_states=prompt_embeddings["model_prompt_embedding"],
+            timestep_cond=timestep_cond,
+            added_cond_kwargs=added_cond_kwargs,
+            garment_features=encoded_reference_features,
             return_dict=False,
-            )[0]
-            
-            
+        )[0]
+        if return_latents:
+            return noise_residual_pred, noisy_person_latents, timesteps
+        else:
+            with torch.no_grad():
+                y_pred_img = self.vae.decode(noise_residual_pred).sample
+            return y_pred_img
         
     def _image_to_latent(self, image: torch.Tensor) -> torch.Tensor:
         return (
@@ -372,6 +422,100 @@ class IdmVtonModel(nn.Module):
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
         
     
+    def _get_add_time_ids(
+        self,
+        original_size,
+        dtype,
+        negative_target_size=None,
+        negative_original_size=None,
+        aesthetic_score=6.0,
+        negative_aesthetic_score=2.5,
+        target_size=None,
+        crops_coords_top_left=(0, 0),
+        negative_crops_coords_top_left=(0,0),
+        text_encoder_projection_dim=None,
+        ):
+        if target_size is None:
+            target_size = target_size or original_size
+        if negative_original_size is None:
+            negative_original_size = original_size
+        if negative_target_size is None:
+            negative_target_size = target_size
+            
+        text_encoder_projection_dim = self.text_encoder_2.config.projection_dim
+            
+        if self.config.requires_aesthetics_score:
+            add_time_ids = list(original_size + crops_coords_top_left + (aesthetic_score,))
+            add_neg_time_ids = list(
+                negative_original_size + negative_crops_coords_top_left + (negative_aesthetic_score,)
+            )
+        else:
+            add_time_ids = list(original_size + crops_coords_top_left + target_size)
+            add_neg_time_ids = list(negative_original_size + crops_coords_top_left + negative_target_size)
+
+        passed_add_embed_dim = (
+            self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
+        )
+        expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
+
+        if (
+            expected_add_embed_dim > passed_add_embed_dim
+            and (expected_add_embed_dim - passed_add_embed_dim) == self.unet.config.addition_time_embed_dim
+        ):
+            raise ValueError(
+                f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. Please make sure to enable `requires_aesthetics_score` with `pipe.register_to_config(requires_aesthetics_score=True)` to make sure `aesthetic_score` {aesthetic_score} and `negative_aesthetic_score` {negative_aesthetic_score} is correctly used by the model."
+            )
+        elif (
+            expected_add_embed_dim < passed_add_embed_dim
+            and (passed_add_embed_dim - expected_add_embed_dim) == self.unet.config.addition_time_embed_dim
+        ):
+            raise ValueError(
+                f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. Please make sure to disable `requires_aesthetics_score` with `pipe.register_to_config(requires_aesthetics_score=False)` to make sure `target_size` {target_size} is correctly used by the model."
+            )
+        elif expected_add_embed_dim != passed_add_embed_dim:
+            raise ValueError(
+                f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
+            )
+
+        add_time_ids = torch.tensor([add_time_ids], dtype=dtype)
+        add_neg_time_ids = torch.tensor([add_neg_time_ids], dtype=dtype)
+
+        return add_time_ids, add_neg_time_ids
+    
+    def prepare_ip_adapter_image_embeds(self, ip_adapter_image, device, num_images_per_prompt):
+        output_hidden_state = not isinstance(self.unet.encoder_hid_proj, ImageProjection)
+        image_embeds, negative_image_embeds = self.encode_image(
+            ip_adapter_image, device, 1, output_hidden_state
+        )
+        if self.config.do_classifier_free_guidance:
+            image_embeds = torch.cat([negative_image_embeds, image_embeds])
+            image_embeds = image_embeds.to(device)
+        return image_embeds
+    
+    def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
+        dtype = next(self.image_encoder.parameters()).dtype
+        # print(image.shape)
+        if not isinstance(image, torch.Tensor):
+            image = self.feature_extractor(image, return_tensors="pt").pixel_values
+
+        image = image.to(device=device, dtype=dtype)
+        if output_hidden_states:
+            image_enc_hidden_states = self.image_encoder(image, output_hidden_states=True).hidden_states[-2]
+            image_enc_hidden_states = image_enc_hidden_states.repeat_interleave(num_images_per_prompt, dim=0)
+            uncond_image_enc_hidden_states = self.image_encoder(
+                torch.zeros_like(image), output_hidden_states=True
+            ).hidden_states[-2]
+            uncond_image_enc_hidden_states = uncond_image_enc_hidden_states.repeat_interleave(
+                num_images_per_prompt, dim=0
+            )
+            return image_enc_hidden_states, uncond_image_enc_hidden_states
+        else:
+            image_embeds = self.image_encoder(image).image_embeds
+            image_embeds = image_embeds.repeat_interleave(num_images_per_prompt, dim=0)
+            uncond_image_embeds = torch.zeros_like(image_embeds)
+
+            return image_embeds, uncond_image_embeds
+    
     @staticmethod 
     def load_from_initial_ckpt(folder="modelCheckpoints", 
                                device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -432,8 +576,7 @@ class IdmVtonModel(nn.Module):
             unet.eval()
             UNet_Encoder.eval()
         
-        model = IdmVtonModel(folder,
-                             unet=unet,
+        model = IdmVtonModel(unet=unet,
                              vae=vae,
                              unet_encoder=UNet_Encoder,
                              feature_extractor= CLIPImageProcessor(),
@@ -446,3 +589,16 @@ class IdmVtonModel(nn.Module):
                              image_sz=image_sz,
                              device=device)
         return model
+
+def c(noise_cfg, noise_pred_text, guidance_rescale=0.0):
+    """
+    Rescale `noise_cfg` according to `guidance_rescale`. Based on findings of [Common Diffusion Noise Schedules and
+    Sample Steps are Flawed](https://arxiv.org/pdf/2305.08891.pdf). See Section 3.4
+    """
+    std_text = noise_pred_text.std(dim=list(range(1, noise_pred_text.ndim)), keepdim=True)
+    std_cfg = noise_cfg.std(dim=list(range(1, noise_cfg.ndim)), keepdim=True)
+    # rescale the results from guidance (fixes overexposure)
+    noise_pred_rescaled = noise_cfg * (std_text / std_cfg)
+    # mix with the original results from guidance by factor guidance_rescale to avoid "plain looking" images
+    noise_cfg = guidance_rescale * noise_pred_rescaled + (1 - guidance_rescale) * noise_cfg
+    return noise_cfg

@@ -8,6 +8,7 @@ from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, Sta
 from src.unet_hacked_garmnet import UNet2DConditionModel as UNet2DConditionModel_ref
 from src.tryon_pipeline import StableDiffusionXLInpaintPipeline as TryonPipeline
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
+from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.utils.import_utils import is_xformers_available
 from accelerate.utils import ProjectConfiguration, set_seed
 from src.unet_hacked_tryon import UNet2DConditionModel
@@ -109,9 +110,12 @@ self=pipe
 
 train_data_dir = [x for x in 
                   [
+                    r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_single_sample",
+                    "/mnt/vdb/datasets/viton_combined_annotated/viton_single_sample",
                     r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
                     "/mnt/vdb/datasets/viton_combined_annotated/viton_combined_annotated"
                   ] if os.path.exists(x)][0]
+
 
 from modules.VtonDataset import pil_to_tensor
 from modules.dataloading import *
@@ -134,7 +138,6 @@ for sample in train_dl:
     with torch.cuda.amp.autocast():
         with torch.no_grad():
             prompt = sample["caption"]
-    
             num_prompts = sample['garment_image'].shape[0]
             negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
     
@@ -166,8 +169,7 @@ for sample in train_dl:
                     prompt = [prompt] * num_prompts
                 if not isinstance(negative_prompt, List):
                     negative_prompt = [negative_prompt] * num_prompts
-    
-    
+                
                 with torch.inference_mode():
                     (
                         prompt_embeds_c,
@@ -180,31 +182,63 @@ for sample in train_dl:
                         do_classifier_free_guidance=False,
                         negative_prompt=negative_prompt,
                     )
-                
+                prompt=None
+                prompt_2: Optional[Union[str, List[str]]] = None
+                mask_image: PipelineImageInput = None
+                masked_image_latents: torch.FloatTensor = None
+                height: Optional[int] = None
+                width: Optional[int] = None
+                padding_mask_crop: Optional[int] = None
+                strength: float = 0.9999
+                num_inference_steps: int = 50
+                timesteps: List[int] = None
+                denoising_start: Optional[float] = None
+                denoising_end: Optional[float] = None
+                guidance_scale: float = 7.5
+                negative_prompt: Optional[Union[str, List[str]]] = None
+                negative_prompt_2: Optional[Union[str, List[str]]] = None
+                num_images_per_prompt: Optional[int] = 1
+                eta: float = 0.0
+                generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None
+                latents: Optional[torch.FloatTensor] = None
+                ip_adapter_image: Optional[PipelineImageInput] = None
+                output_type: Optional[str] = "pil"
+                cloth =None
+                pose_img = None
+                text_embeds_cloth=None
+                return_dict: bool = True
+                cross_attention_kwargs: Optional[Dict[str, Any]] = None
+                guidance_rescale: float = 0.0
+                original_size: Tuple[int, int] = None
+                crops_coords_top_left: Tuple[int, int] = (0, 0)
+                target_size: Tuple[int, int] = None
+                negative_original_size: Optional[Tuple[int, int]] = None
+                negative_crops_coords_top_left: Tuple[int, int] = (0, 0)
+                negative_target_size: Optional[Tuple[int, int]] = None
+                aesthetic_score: float = 6.0
+                negative_aesthetic_score: float = 2.5
+                clip_skip: Optional[int] = None
+                pooled_prompt_embeds_c=None
+                callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None
+                callback_on_step_end_tensor_inputs: List[str] = ["latents"]
+                kwargs={}
+                                
                 generator = torch.Generator(pipe.device).manual_seed(42)
-                images = pipe(
-                    prompt_embeds=prompt_embeds.to(accelerator.device),
-                    negative_prompt_embeds=negative_prompt_embeds.to(accelerator.device),
-                    pooled_prompt_embeds=pooled_prompt_embeds.to(accelerator.device),
-                    negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(accelerator.device),
-                    num_inference_steps=40,
-                    generator=generator,
-                    strength = 1.0,
-                    pose_img = sample['densepose_image'].to(accelerator.device),
-                    text_embeds_cloth=prompt_embeds_c.to(accelerator.device),
-                    cloth = sample["garment_image"].to(accelerator.device),
-                    mask_image=sample['cloth_mask'].to(accelerator.device),
-                    image=(sample['person_image'].to(accelerator.device)+1.0)/2.0, 
-                    height=IMAGE_SIZE[1],
-                    width=IMAGE_SIZE[0],
-                    guidance_scale=2.0,
-                    ip_adapter_image = image_embeds,
-                )[0]
-    
-    
-            for i in range(len(images)):
-                x_sample = pil_to_tensor(images[i])
-                torchvision.utils.save_image(x_sample,os.path.join("results",sample['caption'][i] + ".png"))
+                prompt_embeds=prompt_embeds.to(accelerator.device).half()
+                negative_prompt_embeds=negative_prompt_embeds.to(accelerator.device).half()
+                pooled_prompt_embeds=pooled_prompt_embeds.to(accelerator.device).half()
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(accelerator.device).half()
+                num_inference_steps=40
+                generator=generator
+                strength = 1.0
+                pose_img = sample['densepose_image'].to(accelerator.device).half()
+                text_embeds_cloth=prompt_embeds_c.to(accelerator.device).half()
+                cloth = sample["garment_image"].to(accelerator.device).half()
+                mask_image=sample['cloth_mask'].to(accelerator.device).half()
+                image=(sample['person_image'].to(accelerator.device).half()+1.0)/2.0
+                height=IMAGE_SIZE[1]
+                width=IMAGE_SIZE[0]
+                guidance_scale=2.0
+                ip_adapter_image = image_embeds
                 
-            break
-        
+                break

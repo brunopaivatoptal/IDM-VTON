@@ -47,7 +47,7 @@ def to_long(x, **kwargs):
 
 class Transforms:
     def __init__(
-        self, image_size: Tuple[int, int], use_augmentations: bool = True
+        self, image_size: Tuple[int, int], use_augmentations: bool = False
     ) -> None:
 
         self.image_size = image_size
@@ -339,7 +339,7 @@ class SDCNVTONDataModule(LightningDataModule):
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_transforms = Transforms(
-            self.config.image_size, use_augmentations=True
+            self.config.image_size, use_augmentations=False
         )
         self.train_dataset = SDCNVTONDataset(
             self.config.train_data_dir,
