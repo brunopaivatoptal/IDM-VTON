@@ -87,9 +87,9 @@ def encode_image(image, device, num_images_per_prompt, image_encoder,
         return image_embeds, uncond_image_embeds
 
 def prepare_ip_adapter_image_embeds(ip_adapter_image, device, num_images_per_prompt, 
-                                    unet, image_encoder, feature_extractor,
+                                    encoder_hid_proj, image_encoder, feature_extractor,
                                     do_classifier_free_guidance=True):
-    output_hidden_state = not isinstance(unet.encoder_hid_proj, ImageProjection)
+    output_hidden_state = not isinstance(encoder_hid_proj, ImageProjection)
     image_embeds, negative_image_embeds = encode_image(
         ip_adapter_image, device, 1, image_encoder, feature_extractor, output_hidden_state
     )

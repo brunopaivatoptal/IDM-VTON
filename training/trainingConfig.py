@@ -21,6 +21,7 @@ class trainingConfig:
     noise_offset : bool = True
     lr_scheduler : str = "constant"
     lr_warmup_steps : int = 500
+    snr_gamma : float = 0.1
     gradient_accumulation_steps : int = 4
     proportion_empty_prompts : float = 0.1
     trainig_data_possible_dirs : tuple =(

@@ -84,6 +84,7 @@ def main():
     image_encoder.to(accelerator.device, dtype=weight_dtype)
     unet_encoder.to(accelerator.device, dtype=weight_dtype)
     unet.to(accelerator.device, dtype=weight_dtype)
+    encoder_hid_proj = unet.encoder_hid_proj
     
     optimizer = torch.optim.AdamW(unet.parameters(),
                                   lr=args.learning_rate, 
@@ -108,8 +109,8 @@ def main():
     train_dl = dataset.train_dataloader()
     logger = DataLogger(columns=["epoch", "step", "objective"])
     
-    unet, optimizer, train_dl, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dl, lr_scheduler
+    unet, optimizer, train_dl, lr_scheduler, encoder_hid_proj = accelerator.prepare(
+        unet, optimizer, train_dl, lr_scheduler, encoder_hid_proj
     )
     
     global_step = 0
@@ -178,33 +179,33 @@ def main():
                                                                 garment_prompt_embds[0],
                                                                 return_dict=False)
                         
-                # add cond
-                target_size = original_size = torch.tensor([[args.resolution, args.resolution]] * batch_sz).to(accelerator.device)
-                crop_coords_top_left = torch.tensor([[0, 0]] * batch_sz).to(accelerator.device)
-                add_time_ids = [
-                    original_size,
-                    crop_coords_top_left,
-                    target_size
-                ]
-                add_time_ids = torch.cat(add_time_ids, dim=1).to(accelerator.device, dtype=weight_dtype)
-                
-                image_embeds = ut.prepare_ip_adapter_image_embeds(ip_adapter_img, 
-                                                                  accelerator.device, 
-                                                                  1, 
-                                                                  unet, 
-                                                                  image_encoder, 
-                                                                  img_feature_extractor,
-                                                                  do_classifier_free_guidance=False)
-                image_embeds = unet.encoder_hid_proj(image_embeds).to(noisy_latents.dtype)
-                
-                unet_added_cond_kwargs = {"text_embeds": model_prompt_embds[1],
-                                          "time_ids": add_time_ids,
-                                          "image_embeds":image_embeds}
-                
-                latent_model_input = torch.cat([noisy_latents, 
-                                                cloth_mask_latents, 
-                                                masked_image_latents,
-                                                densepose_latents], dim=1).to(weight_dtype)
+                    # add cond
+                    target_size = original_size = torch.tensor([[args.resolution, args.resolution]] * batch_sz).to(accelerator.device)
+                    crop_coords_top_left = torch.tensor([[0, 0]] * batch_sz).to(accelerator.device)
+                    add_time_ids = [
+                        original_size,
+                        crop_coords_top_left,
+                        target_size
+                    ]
+                    add_time_ids = torch.cat(add_time_ids, dim=1).to(accelerator.device, dtype=weight_dtype)
+                    
+                    image_embeds = ut.prepare_ip_adapter_image_embeds(ip_adapter_img, 
+                                                                      accelerator.device, 
+                                                                      1 * batch_sz, 
+                                                                      encoder_hid_proj, 
+                                                                      image_encoder, 
+                                                                      img_feature_extractor,
+                                                                      do_classifier_free_guidance=False)
+                    image_embeds = encoder_hid_proj(image_embeds).to(noisy_latents.dtype)
+                    
+                    unet_added_cond_kwargs = {"text_embeds": model_prompt_embds[1],
+                                              "time_ids": add_time_ids,
+                                              "image_embeds":image_embeds}
+                    
+                    latent_model_input = torch.cat([noisy_latents, 
+                                                    cloth_mask_latents, 
+                                                    masked_image_latents,
+                                                    densepose_latents], dim=1).to(weight_dtype)
                 
                 noise_residual_pred = unet(
                     latent_model_input,
@@ -215,7 +216,6 @@ def main():
                     garment_features=encoded_reference_features,
                     return_dict=False,
                 )[0]
-                
                 
                 loss = F.mse_loss(noise_residual_pred.float(), noise.float(), reduction="mean")
             
@@ -238,6 +238,11 @@ def main():
             if global_step % args.save_steps == 0:
                 save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                 accelerator.save_state(save_path)
+                if accelerator.is_main_process:
+                    trained_model = accelerator.unwrap_model(unet)
+                    to_save = trained_model.state_dict()
+                    torch.save(to_save, os.path.join(save_path, "person_unet_model.ckpt"))
+                    print("Saved checkpoint !")
             
             begin = time.perf_counter()
                 
