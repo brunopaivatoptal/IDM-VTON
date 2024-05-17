@@ -179,33 +179,33 @@ def main():
                                                                 garment_prompt_embds[0],
                                                                 return_dict=False)
                         
-                    # add cond
-                    target_size = original_size = torch.tensor([[args.resolution, args.resolution]] * batch_sz).to(accelerator.device)
-                    crop_coords_top_left = torch.tensor([[0, 0]] * batch_sz).to(accelerator.device)
-                    add_time_ids = [
-                        original_size,
-                        crop_coords_top_left,
-                        target_size
-                    ]
-                    add_time_ids = torch.cat(add_time_ids, dim=1).to(accelerator.device, dtype=weight_dtype)
-                    
-                    image_embeds = ut.prepare_ip_adapter_image_embeds(ip_adapter_img, 
-                                                                      accelerator.device, 
-                                                                      1 * batch_sz, 
-                                                                      encoder_hid_proj, 
-                                                                      image_encoder, 
-                                                                      img_feature_extractor,
-                                                                      do_classifier_free_guidance=False)
-                    image_embeds = encoder_hid_proj(image_embeds).to(noisy_latents.dtype)
-                    
-                    unet_added_cond_kwargs = {"text_embeds": model_prompt_embds[1],
-                                              "time_ids": add_time_ids,
-                                              "image_embeds":image_embeds}
-                    
-                    latent_model_input = torch.cat([noisy_latents, 
-                                                    cloth_mask_latents, 
-                                                    masked_image_latents,
-                                                    densepose_latents], dim=1).to(weight_dtype)
+                # add cond
+                target_size = original_size = torch.tensor([[args.resolution, args.resolution]] * batch_sz).to(accelerator.device)
+                crop_coords_top_left = torch.tensor([[0, 0]] * batch_sz).to(accelerator.device)
+                add_time_ids = [
+                    original_size,
+                    crop_coords_top_left,
+                    target_size
+                ]
+                add_time_ids = torch.cat(add_time_ids, dim=1).to(accelerator.device, dtype=weight_dtype)
+                
+                image_embeds = ut.prepare_ip_adapter_image_embeds(ip_adapter_img, 
+                                                                  accelerator.device, 
+                                                                  1 * batch_sz, 
+                                                                  encoder_hid_proj, 
+                                                                  image_encoder, 
+                                                                  img_feature_extractor,
+                                                                  do_classifier_free_guidance=False)
+                image_embeds = encoder_hid_proj(image_embeds).to(noisy_latents.dtype)
+                
+                unet_added_cond_kwargs = {"text_embeds": model_prompt_embds[1],
+                                          "time_ids": add_time_ids,
+                                          "image_embeds":image_embeds}
+                
+                latent_model_input = torch.cat([noisy_latents, 
+                                                cloth_mask_latents, 
+                                                masked_image_latents,
+                                                densepose_latents], dim=1).to(weight_dtype)
                 
                 noise_residual_pred = unet(
                     latent_model_input,
