@@ -91,7 +91,7 @@ for batch in train_dl:
             timesteps = torch.Tensor([976, 951, 926, 901, 876, 851, 826, 801, 776, 751, 726, 701, 676, 651,
                     626, 601, 576, 551, 526, 501, 476, 451, 426, 401, 376, 351, 326, 301,
                     276, 251, 226, 201, 176, 151, 126, 101,  76,  51,  26,   1]).to(torch.long)
-            noisy_person_latents = randn_tensor((4,4,32,32),
+            noisy_person_latents = randn_tensor((image_embeds.shape[0],4,32,32),
                                                 device=batch['garment_image'].device,
                                                 dtype=torch.float16)
             start = noisy_person_latents
@@ -99,6 +99,7 @@ for batch in train_dl:
             for ts in tqdm(timesteps):
                 with torch.cuda.amp.autocast():
                     with torch.no_grad():
+                        noisy_person_latents = self.scheduler.scale_model_input(noisy_person_latents, ts)
                         noise_residual_pred, _, _ = model(batch, ts,
                                                           noisy_person_latents=noisy_person_latents,
                                                           return_latents=True)

@@ -6,6 +6,7 @@ from src.tryon_pipeline import StableDiffusionXLInpaintPipeline as TryonPipeline
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.schedulers import KarrasDiffusionSchedulers
+from diffusers.training_utils import EMAModel, compute_snr
 from src.unet_hacked_tryon import UNet2DConditionModel
 from diffusers.utils.torch_utils import randn_tensor
 from dataclasses import dataclass
@@ -136,7 +137,6 @@ class IdmVtonModel(nn.Module):
                 noisy_person_latents = self.scheduler.add_noise(
                     person_latents, noise, timesteps
                 )
-            noisy_person_latents = self.scheduler.scale_model_input(noisy_person_latents, timesteps)
             down, encoded_reference_features = self.unet_encoder(cloth_latents,
                                                                  timesteps,
                                                                  prompt_embeddings["cloth_prompt_embedding"],

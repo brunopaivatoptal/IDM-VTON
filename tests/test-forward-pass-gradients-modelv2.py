@@ -6,11 +6,11 @@ Requires diffusers==0.25.1
 from transformers import AutoTokenizer, PretrainedConfig,CLIPImageProcessor, CLIPVisionModelWithProjection,CLIPTextModelWithProjection, CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, StableDiffusionXLControlNetInpaintPipeline
 from src.unet_hacked_garmnet import UNet2DConditionModel as UNet2DConditionModel_ref
-from src.tryon_pipeline import StableDiffusionXLInpaintPipeline as TryonPipeline
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
 from diffusers.utils.import_utils import is_xformers_available
 from accelerate.utils import ProjectConfiguration, set_seed
 from src.unet_hacked_tryon import UNet2DConditionModel
+from modules.IdmVtonModelV2 import IdmVtonModelV2
 from accelerate.logging import get_logger
 from torchvision import transforms
 from accelerate import Accelerator
@@ -27,6 +27,13 @@ import diffusers
 import torch
 import json
 import os
+
+
+def show(x : torch.Tensor):
+    xi = (x - x.min()) / (x.max() - x.min())
+    plt.imshow(xi.cpu().detach().numpy()[0].transpose(1,2,0))
+    plt.axis("off")
+    plt.tight_layout()
 
 
 noise_scheduler = DDPMScheduler.from_pretrained("modelCheckpoints", subfolder="scheduler")
@@ -90,7 +97,7 @@ unet.eval()
 UNet_Encoder.eval()
 
 
-pipe = TryonPipeline.from_pretrained(
+model = IdmVtonModelV2.from_pretrained(
         "modelCheckpoints",
         unet=unet,
         vae=vae,
@@ -103,9 +110,12 @@ pipe = TryonPipeline.from_pretrained(
         image_encoder=image_encoder,
         torch_dtype=torch.float16,
 )
-pipe.unet_encoder = UNet_Encoder
-pipe = pipe.to(accelerator.device)
-self=pipe
+model.unet_encoder = UNet_Encoder
+model = model.to(accelerator.device)
+self=model
+
+sum([x.numel() for x in model.parameters()]) ## Total of about 7bn parameters
+
 
 train_data_dir = [x for x in 
                   [
@@ -182,7 +192,7 @@ for sample in train_dl:
                 
                 generator = torch.Generator(pipe.device).manual_seed(42)
                 #images = StableDiffusionXLInpaintPipeline.__call__(self,
-                images = pipe(
+                images = model.generate(
                     prompt_embeds=prompt_embeds.to(accelerator.device),
                     negative_prompt_embeds=negative_prompt_embeds.to(accelerator.device),
                     pooled_prompt_embeds=pooled_prompt_embeds.to(accelerator.device),
