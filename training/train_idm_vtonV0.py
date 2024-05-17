@@ -58,6 +58,7 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
     image_encoder = CLIPVisionModelWithProjection.from_pretrained(args.pretrained_model_name_or_path, subfolder="image_encoder")
     unet_encoder = UNet2DConditionModel_ref.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet_encoder")
+    img_feature_extractor = CLIPImageProcessor()
 
     if args.use_ema:
         ema_unet = EMAModel(unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config)
@@ -82,6 +83,7 @@ def main():
     text_encoder_2.to(accelerator.device, dtype=weight_dtype)
     image_encoder.to(accelerator.device, dtype=weight_dtype)
     unet_encoder.to(accelerator.device, dtype=weight_dtype)
+    unet.to(accelerator.device, dtype=weight_dtype)
     
     optimizer = torch.optim.AdamW(unet.parameters(),
                                   lr=args.learning_rate, 
@@ -130,6 +132,7 @@ def main():
                     masked_image_latents = ut.image_to_latent(masked_image, vae)
                     ip_adapter_img = batch["clip_image_encoder_garment_image"]
                     latents = person_latents.to(accelerator.device)
+                    ip_adapter_img = batch["clip_image_encoder_garment_image"]
                     
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents).to(accelerator.device, dtype=weight_dtype)
@@ -160,19 +163,19 @@ def main():
                 image_embeds = torch.stack(image_embeds_)
             
                 with torch.no_grad():
-                    garment_prompt_embds, _ = ut.encode_prompt(batch["caption_cloth"],
+                    garment_prompt_embds = ut.encode_prompt(batch["caption_cloth"],
                                                             [text_encoder, text_encoder_2],
                                                             [tokenizer, tokenizer_2],
                                                             args.proportion_empty_prompts)
                     
-                    model_prompt_embds, _ = ut.encode_prompt(batch["caption"],
+                    model_prompt_embds = ut.encode_prompt(batch["caption"],
                                                             [text_encoder, text_encoder_2],
                                                             [tokenizer, tokenizer_2],
                                                             args.proportion_empty_prompts)
                     
                     down, encoded_reference_features = unet_encoder(cloth_latents.to(weight_dtype),
                                                                 timesteps,
-                                                                garment_prompt_embds,
+                                                                garment_prompt_embds[0],
                                                                 return_dict=False)
                         
                 # add cond
@@ -184,12 +187,29 @@ def main():
                     target_size
                 ]
                 add_time_ids = torch.cat(add_time_ids, dim=1).to(accelerator.device, dtype=weight_dtype)
-                unet_added_cond_kwargs = {"text_embeds": model_prompt_embds[0], "time_ids": add_time_ids}
+                
+                image_embeds = ut.prepare_ip_adapter_image_embeds(ip_adapter_img, 
+                                                                  accelerator.device, 
+                                                                  1, 
+                                                                  unet, 
+                                                                  image_encoder, 
+                                                                  img_feature_extractor,
+                                                                  do_classifier_free_guidance=False)
+                image_embeds = unet.encoder_hid_proj(image_embeds).to(noisy_latents.dtype)
+                
+                unet_added_cond_kwargs = {"text_embeds": model_prompt_embds[1],
+                                          "time_ids": add_time_ids,
+                                          "image_embeds":image_embeds}
+                
+                latent_model_input = torch.cat([noisy_latents, 
+                                                cloth_mask_latents, 
+                                                masked_image_latents,
+                                                densepose_latents], dim=1).to(weight_dtype)
                 
                 noise_residual_pred = unet(
-                    noisy_latents,
+                    latent_model_input,
                     timesteps,
-                    encoder_hidden_states=model_prompt_embds,
+                    encoder_hidden_states=model_prompt_embds[0],
                     timestep_cond=None,
                     added_cond_kwargs=unet_added_cond_kwargs,
                     garment_features=encoded_reference_features,
@@ -208,7 +228,7 @@ def main():
                 optimizer.zero_grad()
 
                 if accelerator.is_main_process:
-                    logger.add([epoch, global_step, avg_loss.detach().cpu().numpy()])
+                    logger.add([epoch, global_step, avg_loss])
                     logger.log()
                     print("Epoch {}, step {}, data_time: {}, time: {}, step_loss: {}".format(
                         epoch, step, load_data_time, time.perf_counter() - begin, avg_loss))

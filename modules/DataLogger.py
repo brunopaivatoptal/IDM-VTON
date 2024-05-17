@@ -23,4 +23,8 @@ class DataLogger:
         self.toDf().to_parquet(self.save_path/"loss.csv", index=False)
         
     def log(self, window=10):
-        print(self.toDf().rolling(window=window).mean().dropna())
+        df = self.toDf()
+        if df.shape[0] < window:
+            print(df)
+        else:
+            print(df.rolling(window=window).mean().dropna())
