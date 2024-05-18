@@ -79,6 +79,14 @@ accelerator = Accelerator(
     project_config=accelerator_project_config,
 )
 
+## Load pretrained ckpt
+fp = r"C:\Users\angel\Downloads\latest\pytorch_model.bin"
+if os.path.exists(fp):
+    print("Starting from finetuned model.:")
+    sd = torch.load(fp)
+    unet.load_state_dict(sd)
+    
+
 # Freeze vae and text_encoder and set unet to trainable
 unet.requires_grad_(False)
 vae.requires_grad_(False)

@@ -12,7 +12,7 @@ class trainingConfig:
     train_batch_size : int = 8
     noise_offset : float = None
     dataloader_num_workers : int = 0
-    save_steps : int = 2_000
+    save_steps : int = 20_000
     mixed_precision : str = "bf16"
     output_dir : str = "results"
     logging_dir : str = "logs"
