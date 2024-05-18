@@ -80,8 +80,9 @@ accelerator = Accelerator(
 )
 
 ## Load pretrained ckpt
+load_ckpt=True
 fp = r"C:\Users\angel\Downloads\latest\pytorch_model.bin"
-if os.path.exists(fp):
+if os.path.exists(fp) and load_ckpt:
     print("Starting from finetuned model.:")
     sd = torch.load(fp)
     unet.load_state_dict(sd)
@@ -142,21 +143,22 @@ Out[3]: dict_keys(['clip_image_encoder_garment_image', 'identity_image', 'identi
                    'segmentation_image', 'densepose_image'])
 """
 
-def visualize(sample, key):
-    xi = sample[key][0]
+def visualize(sample, key, idx):
+    xi = sample[key][idx]
     xi = (xi - xi.min())/(xi.max() - xi.min())
     plt.imshow(xi.cpu().numpy().transpose(1,2,0))
     plt.axis("off")
 
+idx=2
 offset=0
 plt.figure(figsize=(16,10))
 for i, k in enumerate(sample.keys()):
-    if type(sample[k][0]) is str:
+    if type(sample[k][idx]) is str:
         offset+=1
         continue
     plt.subplot(2,4,i+1-offset)
     plt.title(k)
-    visualize(sample, key=k)
+    visualize(sample, key=k, idx=idx)
 plt.tight_layout()
 plt.show()
 
