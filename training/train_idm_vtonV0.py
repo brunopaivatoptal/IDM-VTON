@@ -61,7 +61,11 @@ def main():
     img_feature_extractor = CLIPImageProcessor()
 
     if args.use_ema:
-        ema_unet = EMAModel(unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config)
+        ema_unet = EMAModel(unet.parameters(), 
+                            model_cls=UNet2DConditionModel, 
+                            model_config=unet.config,
+                            use_ema_warmup=True,
+                            )
         ema_unet.to(accelerator.device)
 
     # freeze parameters of models to save more memory
@@ -127,7 +131,12 @@ def main():
                     masked_image = batch["person_image"] * (batch["cloth_mask"] < 0.5)
                     pi = (batch["person_image"] + 1)/2
                     person_latents = ut.image_to_latent(pi, vae)
-                    cloth_mask_latents = ut.mask_to_latent(batch["cloth_mask"], vae)
+                    
+                    #cloth_mask_latents = ut.mask_to_latent(batch["cloth_mask"], vae)
+                    ## Use this more permissive mask from Kinyugo
+                    ## The default mask does not accomodate for all clothing replacements...
+                    cloth_mask_latents = ut.mask_to_latent(batch["identity_mask"], vae)
+                    
                     densepose_latents = ut.image_to_latent(batch["densepose_image"], vae)
                     cloth_latents = ut.image_to_latent(batch["garment_image"], vae)
                     masked_image_latents = ut.image_to_latent(masked_image, vae)
@@ -224,10 +233,19 @@ def main():
                 
                 # Backpropagate
                 accelerator.backward(loss)
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(unet.parameters(), 1.0)
                 optimizer.step()
                 optimizer.zero_grad()
+                
+                if accelerator.sync_gradients:
+                    if args.use_ema:
+                        ema_unet.step(unet.parameters())
 
                 if accelerator.is_main_process:
+                    if args.use_ema:
+                        ema_unet.store(unet.parameters())
+                        ema_unet.copy_to(unet.parameters())
                     logger.add([epoch, global_step, avg_loss])
                     logger.log()
                     print("Epoch {}, step {}, data_time: {}, time: {}, step_loss: {}".format(

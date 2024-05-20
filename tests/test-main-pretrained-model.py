@@ -18,16 +18,24 @@ import torch.utils.data as data
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from packaging import version
+from datetime import datetime
 from PIL import Image
 import transformers
 import torchvision
 import numpy as np
 import accelerate
 import diffusers
+import hashlib
 import torch
 import json
 import os
 
+
+def show(x : torch.Tensor):
+    xi = (x - x.min()) / (x.max() - x.min())
+    plt.imshow(xi.cpu().detach().numpy()[0].transpose(1,2,0))
+    plt.axis("off")
+    plt.tight_layout()
 
 noise_scheduler = DDPMScheduler.from_pretrained("modelCheckpoints", subfolder="scheduler")
 vae = AutoencoderKL.from_pretrained(
@@ -82,6 +90,7 @@ accelerator = Accelerator(
 ## Load pretrained ckpt
 load_ckpt=True
 fp = r"C:\Users\angel\Downloads\latest\pytorch_model.bin"
+#fp = r"C:\Users\angel\Downloads\checkpoint-80000\pytorch_model.bin"
 if os.path.exists(fp) and load_ckpt:
     print("Starting from finetuned model.:")
     sd = torch.load(fp)
@@ -125,14 +134,14 @@ IMAGE_SIZE=(512, 512)
 dm = SDCNVTONDataModule(
     SDCNVTONDataModuleConfig(
         train_data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
-        val_data_dir="./",      
+        val_data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_hd_images_test_paired_annotated_open_pose_yolo_pose",
         image_size=IMAGE_SIZE
     )
 )
 dm.setup()
-train_dl = dm.train_dataloader()
+val_dl = dm.val_dataloader()
 
-for b in train_dl:
+for b in val_dl:
     sample = b
     break
 """
@@ -149,7 +158,7 @@ def visualize(sample, key, idx):
     plt.imshow(xi.cpu().numpy().transpose(1,2,0))
     plt.axis("off")
 
-idx=2
+idx=3
 offset=0
 plt.figure(figsize=(16,10))
 for i, k in enumerate(sample.keys()):
@@ -161,6 +170,20 @@ for i, k in enumerate(sample.keys()):
     visualize(sample, key=k, idx=idx)
 plt.tight_layout()
 plt.show()
+
+for i in range(4):
+    plt.figure(figsize=(12,12))
+    visualize(sample, "garment_image", i)
+    plt.show()
+
+offset = 1
+clip_garments = torch.roll(sample["clip_image_encoder_garment_image"], shifts=1, dims=0)
+garments = torch.roll(sample["garment_image"], shifts=1, dims=0)
+caption = [sample["caption"][-1]] + sample["caption"][1:]
+
+sample["clip_image_encoder_garment_image"] = clip_garments
+sample["garment_image"] = garments
+sample["caption"] = caption
 
 with torch.cuda.amp.autocast():
     with torch.no_grad():
@@ -224,16 +247,20 @@ with torch.cuda.amp.autocast():
                 pose_img = sample['densepose_image'].to(accelerator.device),
                 text_embeds_cloth=prompt_embeds_c.to(accelerator.device),
                 cloth = sample["garment_image"].to(accelerator.device),
-                mask_image=sample['cloth_mask'].to(accelerator.device),
+                #mask_image=sample['cloth_mask'].to(accelerator.device),
+                mask_image=sample['identity_mask'].to(accelerator.device),
                 image=(sample['person_image'].to(accelerator.device)+1.0)/2.0, 
+                #image=sample['person_image'].to(accelerator.device),
                 height=IMAGE_SIZE[1],
                 width=IMAGE_SIZE[0],
-                guidance_scale=2.0,
+                guidance_scale=1.0,
                 ip_adapter_image = image_embeds,
             )[0]
 
 
         for i in range(len(images)):
+            name = hashlib.sha1(str(datetime.now()).encode("utf8")).hexdigest()
             x_sample = pil_to_tensor(images[i])
-            torchvision.utils.save_image(x_sample,os.path.join("results",sample['caption'][i] + ".png"))
+            x_sample = (x_sample - x_sample.min()) / (x_sample.max() - x_sample.min())
+            torchvision.utils.save_image(x_sample,os.path.join("results",name + ".png"))
         
