@@ -61,6 +61,7 @@ def main():
     img_feature_extractor = CLIPImageProcessor()
 
     if args.use_ema:
+        print("Training with EMA Unet.")
         ema_unet = EMAModel(unet.parameters(), 
                             model_cls=UNet2DConditionModel, 
                             model_config=unet.config,

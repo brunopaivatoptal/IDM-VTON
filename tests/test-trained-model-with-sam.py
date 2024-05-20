@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
 from diffusers.utils.import_utils import is_xformers_available
 from accelerate.utils import ProjectConfiguration, set_seed
 from src.unet_hacked_tryon import UNet2DConditionModel
+from transformers import SamModel, SamProcessor
 from accelerate.logging import get_logger
 from torchvision import transforms
 from accelerate import Accelerator
@@ -124,10 +125,9 @@ pipe = TryonPipeline.from_pretrained(
 pipe.unet_encoder = UNet_Encoder
 pipe = pipe.to(accelerator.device)
 
+
 from modules.VtonDataset import pil_to_tensor
 from modules.dataloading import *
-#ds = SDCNVTONDataset(data_dir=r"E:\backups\toptal\pixelcut\virtual-try-on\viton_combined_annotated\viton_combined_annotated",
-#                     pretrained_processor_path="openai/clip-vit-large-patch14")
 
 IMAGE_SIZE=(512, 512)
 
@@ -247,8 +247,8 @@ with torch.cuda.amp.autocast():
                 pose_img = sample['densepose_image'].to(accelerator.device),
                 text_embeds_cloth=prompt_embeds_c.to(accelerator.device),
                 cloth = sample["garment_image"].to(accelerator.device),
-                #mask_image=sample['cloth_mask'].to(accelerator.device),
-                mask_image=sample['identity_mask'].to(accelerator.device),
+                mask_image=sample['cloth_mask'].to(accelerator.device),
+                #mask_image=sample['identity_mask'].to(accelerator.device),
                 image=(sample['person_image'].to(accelerator.device)+1.0)/2.0, 
                 #image=sample['person_image'].to(accelerator.device),
                 height=IMAGE_SIZE[1],
