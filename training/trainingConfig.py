@@ -6,7 +6,7 @@ from pathlib import Path
 class trainingConfig:
     pretrained_model_name_or_path : Path=Path("modelCheckpoints")
     resolution : int = 256
-    learning_rate : float = 1e-4
+    learning_rate : float = 2e-5
     weight_decay : float = 1e-2
     num_train_epochs : float = 100
     train_batch_size : int = 8

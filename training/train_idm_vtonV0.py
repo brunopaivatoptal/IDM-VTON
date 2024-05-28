@@ -244,9 +244,10 @@ def main():
                         ema_unet.step(unet.parameters())
 
                 if accelerator.is_main_process:
+                    unet_s = accelerator.unwrap_model(unet)
                     if args.use_ema:
-                        ema_unet.store(unet.parameters())
-                        ema_unet.copy_to(unet.parameters())
+                        ema_unet.store(unet_s.parameters())
+                        ema_unet.copy_to(unet_s.parameters())
                     logger.add([epoch, global_step, avg_loss])
                     logger.log()
                     print("Epoch {}, step {}, data_time: {}, time: {}, step_loss: {}".format(
